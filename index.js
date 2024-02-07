@@ -3,128 +3,164 @@ const rawTransaction = "020000000001010ccc140e766b5dbc884ea2d780c5e91e4eb77597ae
 
 // Function to decode fixed-length fields to an integer
 function decodeFixedLength(hexValue) {
-    return parseInt(hexValue.match(/../g).reverse().join(''), 16);
+  // Convert little-endian to big-endian using the existing function
+  const bigEndianHex = littleEndianToBigEndian(hexValue);
+  // Parse the big-endian hex value
+  return parseInt(bigEndianHex, 16);
 }
 
 // Function to decode CompactSize fields
 function decodeCompactSize(hexValue) {
-    const firstByte = parseInt(hexValue.substring(0, 2), 16);
-    if (firstByte < 253) {
-        return firstByte;
-    } else if (firstByte === 253) {
-        // 2 bytes
-        return parseInt(hexValue.substring(2, 6).match(/../g).reverse().join(''), 16);
-    } else if (firstByte === 254) {
-        // 4 bytes
-        return parseInt(hexValue.substring(2, 10).match(/../g).reverse().join(''), 16);
-    } else if (firstByte === 255) {
-        // 8 bytes
-        return parseInt(hexValue.substring(2, 18).match(/../g).reverse().join(''), 16);
-    }
+  const firstByte = parseInt(hexValue.substring(0, 2), 16);
+  if (firstByte < 253) {
+      return firstByte;
+  } else if (firstByte === 253) {
+      // 2 bytes
+      return decodeFixedLength(hexValue.substring(2, 6));
+  } else if (firstByte === 254) {
+      // 4 bytes
+      return decodeFixedLength(hexValue.substring(2, 10));
+  } else if (firstByte === 255) {
+      // 8 bytes
+      return decodeFixedLength(hexValue.substring(2, 18));
+  }
 }
 
 // Function to convert little endian hex to big endian hex
 function littleEndianToBigEndian(hexString) {
-    return hexString.match(/../g).reverse().join('');
+  return hexString.match(/../g).reverse().join('');
 }
 
-// Decode version number
-const versionHex = rawTransaction.substring(0, 8);
-const version = decodeFixedLength(versionHex);  
+
+// Decode a field from raw transaction data
+function decodeField(startIndex, length, decodeFunction) {
+  const hexValue = rawTransaction.substring(startIndex, startIndex + length);
+  return decodeFunction(hexValue);
+}
+
+let currentOffset = 0;
+
+// Decode version number which is first 4 bytes of transaction hex (8 hex characters)
+const version = decodeField(currentOffset, 8, decodeFixedLength);
 console.log(`version: ${version}`);
 
-// Decode extended marker and flag
-const extendedMarkerHex = rawTransaction.substring(8, 10);
-const extendedMarker = decodeFixedLength(extendedMarkerHex);  
+currentOffset += 8;
+
+// Decode extended marker which is next 1 byte (2 hex characters)
+const extendedMarker = decodeField(currentOffset, 2, decodeFixedLength);
 console.log(`extended marker: ${extendedMarker}`);
 
-const extendedFlagHex = rawTransaction.substring(10, 12);
-const extendedFlag = decodeFixedLength(extendedFlagHex);  
+currentOffset += 2;
+
+// Decode extended flag which is next 1 byte (2 hex characters)
+const extendedFlag = decodeField(currentOffset, 2, decodeFixedLength);
 console.log(`extended flag: ${extendedFlag}`);
 
-// Decode input count
-const inputCountHex = rawTransaction.substring(12, 14);
-const inputCount = decodeCompactSize(inputCountHex);  
+currentOffset += 2;
+
+// Decode count of inputs in transaction which is next 1 bytes (2 hex characters)
+const inputCount = decodeField(currentOffset, 2, decodeCompactSize);
 console.log(`input count: ${inputCount}`);
 
-// Parse txid source
-const txidSourceHex = rawTransaction.substring(14, 14 + 2 * 32);
-const txidSourceLittleEndian = littleEndianToBigEndian(txidSourceHex);
-console.log(`txid source (big endian): ${txidSourceLittleEndian}`);
+currentOffset += 2;
 
-// Decode vout
-const voutHex = rawTransaction.substring(14 + 2 * 32, 14 + 2 * 32 + 8);
-const voutLittleEndian = littleEndianToBigEndian(voutHex);
-const vout = parseInt(voutLittleEndian, 16);
-console.log(`vout: ${vout}`);
+  for (let i = 0; i < inputCount; i++) {
+    // Parse txid source
+    const txidSource = decodeField(currentOffset, 64, littleEndianToBigEndian);
+    console.log(`txid source (big endian): ${txidSource}`);
 
-// Decode scriptSig length
-const scriptSigLenHex = rawTransaction.substring(14 + 2 * 32 + 8, 14 + 2 * 32 + 8 + 2);
-let scriptSigLen;
-if (parseInt(scriptSigLenHex, 16) < 253) {
-    scriptSigLen = parseInt(scriptSigLenHex, 16);
-} else {
-    const byteCount = parseInt(rawTransaction.substring(14 + 2 * 32 + 8 + 2, 14 + 2 * 32 + 8 + 2 + 2), 16);
-    scriptSigLen = parseInt(rawTransaction.substring(14 + 2 * 32 + 8 + 2 + 2, 14 + 2 * 32 + 8 + 2 + 2 + 2 * byteCount), 16);
-}
-console.log(`scriptSig length: ${scriptSigLen}`);
+    currentOffset += 64;
 
-// Parse scriptSig
-const scriptSigHex = rawTransaction.substring(14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen, 14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen);
-console.log(`scriptSig: ${scriptSigHex}`);
+    // Parse vout
+    const vout = decodeField(currentOffset, 8, decodeFixedLength);
+    console.log(`vout: ${vout}`);
 
-// Decode nSequence
-const nSequenceHex = rawTransaction.substring(14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen, 14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8);
-const nSequenceLittleEndian = littleEndianToBigEndian(nSequenceHex);
-const nSequence = parseInt(nSequenceLittleEndian, 16);
-console.log(`nSequence: ${nSequence}`);
+    currentOffset += 8;
+
+    // Parse scriptSig length
+    const scriptSigLenHex = rawTransaction.substring(currentOffset, currentOffset + 2);
+    const scriptSigLen = decodeCompactSize(scriptSigLenHex);
+    console.log(`scriptSig length: ${scriptSigLen}`);
+
+    currentOffset += 2;
+
+    // Parse scriptSig
+    const scriptSig = rawTransaction.substring(currentOffset, currentOffset + scriptSigLen * 2);
+    console.log(`scriptSig: ${scriptSig}`);
+
+    currentOffset += scriptSigLen * 2;
+    
+    // Parse sequence
+    const sequence = decodeField(currentOffset, 8, decodeFixedLength);
+    console.log(`sequence: ${sequence}`);
+
+    currentOffset += 8;
+  }
+
 
 // Decode output count
-const outputCountHex = rawTransaction.substring(14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8, 14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8 + 2);
+const outputCountHex = rawTransaction.substring(currentOffset, currentOffset + 2);
 const outputCount = decodeCompactSize(outputCountHex);
 console.log(`output count: ${outputCount}`);
 
-const outputAmountHex = rawTransaction.substring(
-  14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8 + 2,  // Start index
-  14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8 + 2 + 16 // End index
-);
+currentOffset += 2;
 
-// Reverse the order of the hex characters to convert from little-endian to big-endian
-const outputAmountBigEndian = outputAmountHex.match(/../g).reverse().join('');
+for (let i = 0; i < outputCount; i++) {
+  const outputAmountHex = rawTransaction.substring(currentOffset, currentOffset + 16);
+  // Reverse the order of the hex characters to convert from little-endian to big-endian
+  const outputAmountBigEndian = littleEndianToBigEndian(outputAmountHex);
 
-// Convert the big-endian hex string to an integer
-const outputAmountSatoshi = BigInt(`0x${outputAmountBigEndian}`);
+  // Convert the big-endian hex string to an integer
+  const outputAmountSatoshi = BigInt(`0x${outputAmountBigEndian}`);
 
-console.log(`Output amount in satoshi: ${outputAmountSatoshi}`);
+  console.log(`Output amount in satoshi: ${outputAmountSatoshi}`);
 
-// Parse script length of the output script
-const outputScriptLenHex = rawTransaction.substring(
-  14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8 + 2 + 16, // Start index
-  14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8 + 2 + 16 + 2 // End index
-);
+  currentOffset += 16;
 
-let outputScriptLen;
-if (parseInt(outputScriptLenHex, 16) < 253) {
-  outputScriptLen = parseInt(outputScriptLenHex, 16);
-} else {
-  const byteCount = parseInt(rawTransaction.substring(
-      14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8 + 2 + 16 + 2, // Start index
-      14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8 + 2 + 16 + 2 + 2 // End index
-  ), 16);
-  outputScriptLen = parseInt(rawTransaction.substring(
-      14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8 + 2 + 16 + 2 + 2, // Start index
-      14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8 + 2 + 16 + 2 + 2 + 2 * byteCount // End index
-  ), 16);
+  // Parse script length of the output script
+  const outputScriptLenHex = rawTransaction.substring(currentOffset, currentOffset + 2);
+
+  const outputScriptLen = decodeCompactSize(outputScriptLenHex);
+  console.log(`Output script length: ${outputScriptLen}`);
+
+  currentOffset += 2;
+
+  // Extract the locking script (scriptPubKey)
+  const lockingScript = rawTransaction.substring(currentOffset, currentOffset + outputScriptLen * 2);
+  console.log(`Locking Script (scriptPubKey): ${lockingScript}`);
+
+  currentOffset += outputScriptLen * 2;
 }
 
-console.log(`Output script length: ${outputScriptLen}`);
+const witnessProgramItemCountHex = rawTransaction.substring(currentOffset, currentOffset + 2);
+console.log(`witnessProgramItemCountHex: ${witnessProgramItemCountHex}`);
 
-// Extract the locking script (scriptPubKey)
-// Extract the locking script (scriptPubKey)
-const lockingScript = rawTransaction.substring(
-  14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8 + 2 + 16 + 2, // Start index
-  14 + 2 * 32 + 8 + 2 + 2 * scriptSigLen + 2 * scriptSigLen + 8 + 2 + 16 + 2 + outputScriptLen * 2 // End index
-);
+// Decode the second locking script length
+const witnessProgramItemsCount = parseInt(witnessProgramItemCountHex, 16);
+console.log(`witnessProgramItemsCount: ${witnessProgramItemsCount}`);
 
-console.log(`Locking Script (scriptPubKey): ${lockingScript}`);
+currentOffset += 2;
 
+for (let i = 0; i < witnessProgramItemsCount; i++) {
+  
+  const firstWitnessProgramItemSizeHex = rawTransaction.substring(currentOffset, currentOffset + 2);
+  console.log(`firstWitnessProgramItemSizeHex: ${firstWitnessProgramItemSizeHex}`);
+
+  // Decode the second locking script length
+  const firstWitnessProgramItemSize = decodeCompactSize(firstWitnessProgramItemSizeHex, 16);
+  console.log(`firstWitnessProgramItemSize: ${firstWitnessProgramItemSize}`);
+
+  const firstWitnessItemHex = rawTransaction.substring(currentOffset, currentOffset + firstWitnessProgramItemSize * 2);
+  console.log(`firstWitnessItemHex: ${firstWitnessItemHex}`);
+
+  // Decode the second locking script length
+  console.log(`firstWitnessItem: ${firstWitnessItemHex}`);
+
+  currentOffset += firstWitnessProgramItemSize * 2;
+}
+
+const nLockTimeHex = rawTransaction.substring(currentOffset, currentOffset + 8);
+console.log(`nLockTimeHex: ${nLockTimeHex}`);
+
+const nLockTime = decodeFixedLength(nLockTimeHex);
+console.log(`nLockTime: ${nLockTime}`);
