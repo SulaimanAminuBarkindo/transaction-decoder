@@ -15,7 +15,12 @@ This is a simple Node.js application that decodes raw Bitcoin transactions (only
 2. Clone this repository to your local machine:
 
     ```
-    git clone <repository-url>
+    git clone git@github.com:SulaimanAminuBarkindo/transaction-decoder.git
+    ```
+
+    if using https use
+    ```
+    git clone https://github.com/SulaimanAminuBarkindo/transaction-decoder.git
     ```
 
 3. Navigate to the project directory:
