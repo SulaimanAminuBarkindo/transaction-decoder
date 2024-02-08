@@ -155,7 +155,7 @@ rl.question('Enter raw transaction hex: ', (rawTransaction) => {
 
     transaction.lockTime = lockTime;
 
-    console.log(JSON.stringify(transaction))
+    console.log(JSON.stringify(transaction, null, 2));
 
     rl.close();
 });
