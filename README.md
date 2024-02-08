@@ -1,6 +1,6 @@
 # Transaction Decoder
 
-This is a simple Node.js application that decodes raw Bitcoin transactions (only version 2 transactions for now). It extracts various fields from the transaction hex input and presents them in a readable format.
+This is a simple Node.js application that decodes raw Bitcoin transaction. It extracts various fields from the transaction hex input and presents them in a readable format.
 
 ## Features
 
