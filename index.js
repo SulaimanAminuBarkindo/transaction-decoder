@@ -18,35 +18,43 @@ function satoshisToBitcoin(satoshis) {
 
 function decodeFixedLength(hexValue) {
     const bigEndianHex = convertEndian(hexValue);
-    return parseInt(bigEndianHex, 16);
+    return [parseInt(bigEndianHex, 16), hexValue.length];
 }
 
 function decodeCompactSize(hexValue) {
     const firstByte = parseInt(hexValue.substring(0, 2), 16);
+    let hexToSkip = 2;
+
     if (firstByte < 253) {
-        return firstByte;
+        return [firstByte, hexToSkip];
     } else if (firstByte === 253) {
-        return decodeFixedLength(hexValue.substring(2, 6));
+        hexToSkip = 4;
+        const [decodedValue, hexToSkipFixed] = decodeFixedLength(hexValue.substring(2, 6))
+        return [decodedValue, hexToSkip];
     } else if (firstByte === 254) {
-        return decodeFixedLength(hexValue.substring(2, 10));
+        hexToSkip = 8;
+        const [decodedValue, hexToSkipFixed] = decodeFixedLength(hexValue.substring(2, 10))
+        return [decodedValue, hexToSkip];
     } else if (firstByte === 255) {
-        return decodeFixedLength(hexValue.substring(2, 18));
+        hexToSkip = 16;
+        const [decodedValue, hexToSkipFixed] = decodeFixedLength(hexValue.substring(2, 18))
+        return [decodedValue, hexToSkip];
     }
+}
+
+function decodeField(startIndex, length, decodeFunction, rawTransaction) {
+    const hexValue = rawTransaction.substring(startIndex, startIndex + length);
+    const [decodedValue, hexToSkip] = decodeFunction(hexValue);
+    return [decodedValue, hexToSkip];
 }
 
 // Function to convert little endian hex to big endian hex and vice versa
 function convertEndian(hexString) {
-    return hexString.match(/../g).reverse().join('');
-}
-
-// Decode a field from raw transaction data
-function decodeField(startIndex, length, decodeFunction, rawTransaction) {
-    const hexValue = rawTransaction.substring(startIndex, startIndex + length);
-    return decodeFunction(hexValue);
+    const convertedHex = hexString.match(/../g).reverse().join('');
+    return [convertedHex, hexString.length]
 }
 
 function isSegWitTransaction(rawTransaction) {
-    // Check if version is at least 2 (SegWit introduced in version 2)
     if (rawTransaction.length < 10) {
         throw new Error("Raw transaction is too short");
     }
@@ -62,56 +70,42 @@ function isSegWitTransaction(rawTransaction) {
     return marker === 0 && flag === 1;
 }
 
-const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-});
+function getVersion(rawTransaction) {
+    const [version, hexToSkip] = decodeField(0, 8, decodeFixedLength, rawTransaction);
+    return [version, hexToSkip];
+}
 
-rl.question('Enter raw transaction hex: ', (rawTransaction) => {
-    const isSegWit = isSegWitTransaction(rawTransaction);
-    const hash = convertEndian(sha256Hex(sha256Hex(rawTransaction)))
+function getInputCount(rawTransaction, isSegWit) {
+    let [, nextOffset] = getVersion(rawTransaction);
 
-    let transaction = {
-        hash: hash,
-        version: "",
-        lockTime: "",
-        vin: [],
-        vout: []
-    };
+    // skip marker and flag (2 bytes or 4 hex) if it is segwit transaction
+    nextOffset = isSegWit ? nextOffset + 4 : nextOffset;
+    const [inputCount, hexToSkip] = decodeField(nextOffset, 2, decodeCompactSize, rawTransaction);
 
-    let currentOffset = 0;
+    return [inputCount, nextOffset + hexToSkip];
+}
 
-    const version = decodeField(currentOffset, 8, decodeFixedLength, rawTransaction);
-    transaction.version = version;
-    currentOffset += 8;
+function getInputs(rawTransaction, isSegWit) {
+    let inputs = [];
+    let [inputCount, nextOffset] = getInputCount(rawTransaction, isSegWit);
 
-    if (isSegWit) {
-        const extendedMarker = decodeField(currentOffset, 2, decodeFixedLength, rawTransaction);
-        currentOffset += 2;
-
-        const extendedFlag = decodeField(currentOffset, 2, decodeFixedLength, rawTransaction);
-        currentOffset += 2;
-    }
-
-    const inputCount = decodeField(currentOffset, 2, decodeCompactSize, rawTransaction);;
-    currentOffset += 2;
-
+    currentOffset = nextOffset
     for (let i = 0; i < inputCount; i++) {
-        const txid = decodeField(currentOffset, 64, convertEndian, rawTransaction);
-        currentOffset += 64;
+        const [txid, hexToSkip] = decodeField(currentOffset, 64, convertEndian, rawTransaction);
+        currentOffset += hexToSkip;
 
-        const vout = decodeField(currentOffset, 8, decodeFixedLength, rawTransaction);
-        currentOffset += 8;
+        const [vout, hexToSkip1] = decodeField(currentOffset, 8, decodeFixedLength, rawTransaction);
+        currentOffset += hexToSkip1;
 
         const scriptSigLenHex = rawTransaction.substring(currentOffset, currentOffset + 2);
-        const scriptSigLen = decodeCompactSize(scriptSigLenHex);
-        currentOffset += 2;
+        const [scriptSigLen, hexToSkip2] = decodeCompactSize(scriptSigLenHex);
+        currentOffset += hexToSkip2;
 
         const scriptSig = rawTransaction.substring(currentOffset, currentOffset + scriptSigLen * 2);
         currentOffset += scriptSigLen * 2;
 
-        const sequence = decodeField(currentOffset, 8, decodeFixedLength, rawTransaction);
-        currentOffset += 8;
+        const [sequence, hexToSkip3] = decodeField(currentOffset, 8, decodeFixedLength, rawTransaction);
+        currentOffset += hexToSkip3;
 
         const input = {
             txid: txid,
@@ -121,12 +115,24 @@ rl.question('Enter raw transaction hex: ', (rawTransaction) => {
             sequence: sequence,
         };
 
-        transaction.vin.push(input);
+        inputs.push(input);
     }
 
-    const outputCountHex = rawTransaction.substring(currentOffset, currentOffset + 2);
-    const outputCount = decodeCompactSize(outputCountHex);
-    currentOffset += 2;
+    return [inputs, currentOffset];
+}
+
+function getOutputCount(rawTransaction, isSegWit) {
+    const [, nextOffset] = getInputs(rawTransaction, isSegWit);
+
+    const [inputCount, hexToSkip] = decodeField(nextOffset, 2, decodeCompactSize, rawTransaction);
+
+    return [inputCount, nextOffset + hexToSkip];
+}
+
+function getOutputs(rawTransaction, isSegWit) {
+    let outputs = [];
+    const [outputCount, nextOffset] = getOutputCount(rawTransaction, isSegWit);
+    currentOffset = nextOffset;
 
     for (let i = 0; i < outputCount; i++) {
         const outputAmountHex = rawTransaction.substring(currentOffset, currentOffset + 16);
@@ -137,8 +143,8 @@ rl.question('Enter raw transaction hex: ', (rawTransaction) => {
         currentOffset += 16;
 
         const outputScriptLenHex = rawTransaction.substring(currentOffset, currentOffset + 2);
-        const outputScriptLen = decodeCompactSize(outputScriptLenHex);
-        currentOffset += 2;
+        const [outputScriptLen, hexToSkip] = decodeCompactSize(outputScriptLenHex);
+        currentOffset += hexToSkip;
 
         const scriptPubKeyHex = rawTransaction.substring(currentOffset, currentOffset + outputScriptLen * 2);
         currentOffset += outputScriptLen * 2;
@@ -149,33 +155,84 @@ rl.question('Enter raw transaction hex: ', (rawTransaction) => {
             scriptPubKey: {
                 hex: scriptPubKeyHex
             }
-        }
+        };
 
-        transaction.vout.push(output)
+        outputs.push(output);
     }
 
-    if (isSegWit) {
+    return [outputs, currentOffset];
+}
+
+function getWitnessItems(rawTransaction) {
+    const isSegWit = true;
+    const [inputCount, _] = getInputCount(rawTransaction, isSegWit);
+    const [, nextOffset] = getOutputs(rawTransaction, isSegWit);
+    let currentOffset = nextOffset;
+
+    const witnessItemsForAllInputs = [];
+    for (let i = 0; i < inputCount; i++) {
         const witnessItemsCountHex = rawTransaction.substring(currentOffset, currentOffset + 2);
         const witnessItemsCount = parseInt(witnessItemsCountHex, 16);
-
         currentOffset += 2;
 
-        for (let i = 0; i < witnessItemsCount; i++) {
-            const firstWitnessItemSizeHex = rawTransaction.substring(currentOffset, currentOffset + 2);
-            const firstWitnessItemSize = decodeCompactSize(firstWitnessItemSizeHex, 16);
-            currentOffset += 2;
+        const witnessItemsForOneInput = [];
+        for (let j = 0; j < witnessItemsCount; j++) {
+            const WitnessItemSizeHex = rawTransaction.substring(currentOffset, currentOffset + 2);
+            const [WitnessItemSize, hexToSkip] = decodeCompactSize(WitnessItemSizeHex, 16);
+            currentOffset += hexToSkip;
 
-            const firstWitnessItemHex = rawTransaction.substring(currentOffset, currentOffset + firstWitnessItemSize * 2);
-            currentOffset += firstWitnessItemSize * 2;
+            const WitnessItemHex = rawTransaction.substring(currentOffset, currentOffset + WitnessItemSize * 2);
+            currentOffset += WitnessItemSize * 2;
 
-            transaction.vin[i].txinwitness[i] = firstWitnessItemHex
+            witnessItemsForOneInput[j] = WitnessItemHex
         }
+        witnessItemsForAllInputs.push(witnessItemsForOneInput);
     }
 
-    const lockTimeHex = rawTransaction.substring(currentOffset, currentOffset + 8);
-    const lockTime = decodeFixedLength(lockTimeHex);
+    return [witnessItemsForAllInputs, currentOffset];
+}
 
-    transaction.lockTime = lockTime;
+function getLockTime(rawTransaction) {
+    const lockTimeHex = rawTransaction.substring(rawTransaction.length - 8);
+    const [lockTime, ] = decodeFixedLength(lockTimeHex);
+    return lockTime;
+}
+
+function addWitnessItemsToInputs(rawTransaction, Inputs) {
+    const [witnessItemsForAllInputs,] = getWitnessItems(rawTransaction);
+
+    Inputs.forEach((input, index) => {
+        input.txinwitness = witnessItemsForAllInputs[index] || [];
+    });
+
+    return Inputs;
+}
+
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
+
+rl.question('Enter raw transaction hex: ', (rawTransaction) => {
+    const isSegWit = isSegWitTransaction(rawTransaction);
+    const [hash, ] = convertEndian(sha256Hex(sha256Hex(rawTransaction)))
+
+    const [version, ] = getVersion(rawTransaction);
+    let [inputs, ] = getInputs(rawTransaction, isSegWit);
+    const [outputs, ] = getOutputs(rawTransaction, isSegWit);
+    const lockTime = getLockTime(rawTransaction);
+
+    if (isSegWit) {
+        inputs = addWitnessItemsToInputs(rawTransaction, inputs);
+    }
+
+    const transaction = {
+        hash: hash,
+        version: version,
+        lockTime: lockTime,
+        vin: inputs,
+        vout: outputs
+    };
 
     console.log(JSON.stringify(transaction, null, 2));
 
